@@ -60,6 +60,10 @@ struct gem_queue {
 	rte_iova_t tx_ring_iova;
 	uint16_t tx_head;
 	uint16_t tx_tail;
+	/* Number of descriptors that have been given to HW but not yet completed.
+	 * Used to handle ring full when tx_head == tx_tail.
+	 */
+	uint16_t tx_pending;
 };
 
 struct gem_priv {
@@ -70,10 +74,13 @@ struct gem_priv {
 
 	struct rte_ether_addr mac_addr;
 
-	void *base_addr;
+	void *base_addr; 
 
 	/* Simulation knobs */
 	uint8_t sim_rx;
+	uint8_t phy_addr;
+	uint8_t autoneg;
+	uint8_t mdc_div_bits;
 
 	/* Software statistics (used for both sim and bring-up HW mode) */
 	uint64_t rx_pkts;
