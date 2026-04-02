@@ -13,6 +13,29 @@
 
 /* Cache maintenance for non-coherent DMA (common on embedded SoCs). */
 static inline void
+gem_dma_clean(const void *addr, size_t len)
+{
+#if defined(__aarch64__)
+	uintptr_t p = (uintptr_t)addr;
+	uintptr_t end = p + len;
+	const uintptr_t line = 64; /* typical; over-cleaning is OK */
+
+	p &= ~(line - 1);
+	for (; p < end; p += line)
+		/*
+		 * Use "cvau" (to Point of Unification) for user-space cache maintenance.
+		 * Some systems trap on "cvac/ivac" in EL0.
+		 */
+		__asm__ volatile("dc cvau, %0" :: "r"(p) : "memory");
+
+	__asm__ volatile("dsb sy" ::: "memory");
+#else
+	RTE_SET_USED(addr);
+	RTE_SET_USED(len);
+#endif
+}
+
+static inline void
 gem_dma_invalidate(const void *addr, size_t len)
 {
 #if defined(__aarch64__)
@@ -22,9 +45,10 @@ gem_dma_invalidate(const void *addr, size_t len)
 
 	p &= ~(line - 1);
 	for (; p < end; p += line)
-		__asm__ volatile("dc ivac, %0" :: "r"(p) : "memory");
+		/* Invalidate to PoU for user-space execution. */
+		__asm__ volatile("dc ivau, %0" :: "r"(p) : "memory");
 
-	__asm__ volatile("dsb ish" ::: "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
 #else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);
@@ -90,6 +114,9 @@ gem_rx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 
 	while (nb_rx < nb_bufs) {
 		struct gem_rx_bd *bd = &q->rx_ring[q->rx_head];
+		/* Non-coherent DMA: observe device-updated descriptor, then order reads. */
+		gem_dma_invalidate(bd, sizeof(*bd));
+		rte_io_rmb();
 		uint32_t addr = bd->addr;
 		uint32_t stat;
 		uint16_t len;
@@ -121,6 +148,9 @@ gem_rx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 			bd->stat = 0;
 			rte_wmb();
 			bd->addr = new_addr_flags;
+			/* Ensure descriptor writes are visible to device. */
+			gem_dma_clean(bd, sizeof(*bd));
+			rte_io_wmb();
 
 			q->rx_head = (q->rx_head + 1) % GEM_DESC_NUM;
 			continue;
@@ -159,6 +189,9 @@ gem_rx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		bd->stat = 0;
 		rte_wmb();
 		bd->addr = new_addr_flags;
+		/* Ensure descriptor writes are visible to device. */
+		gem_dma_clean(bd, sizeof(*bd));
+		rte_io_wmb();
 
 		m->pkt_len = len;
 		m->data_len = len;
@@ -166,6 +199,12 @@ gem_rx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		m->next = NULL;
 		m->port = q->priv->port_id;
 		m->ol_flags = 0;
+
+		/* Extra debug for DMA visibility: mbuf VA/IOVA at RX completion */
+		GEM_LOG("RX mbuf va=%p iova=0x%llx len=%u",
+			rte_pktmbuf_mtod(m, void *),
+			(unsigned long long)rte_pktmbuf_iova(m),
+			(unsigned)m->pkt_len);
 
 		/* Non-coherent DMA: invalidate payload so CPU reads fresh bytes. */
 		gem_dma_invalidate(rte_pktmbuf_mtod(m, const void *), len);

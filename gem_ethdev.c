@@ -45,9 +45,9 @@ gem_dev_start(struct rte_eth_dev *dev)
 	{
 		const uint8_t *a = priv->mac_addr.addr_bytes;
 		uint32_t bot = (uint32_t)a[0]        |
-			       ((uint32_t)a[1] << 8)  |
-			       ((uint32_t)a[2] << 16) |
-			       ((uint32_t)a[3] << 24);
+		               ((uint32_t)a[1] << 8)  |
+		               ((uint32_t)a[2] << 16) |
+		               ((uint32_t)a[3] << 24);
 		uint32_t top = (uint32_t)a[4] | ((uint32_t)a[5] << 8);
 		gem_write32(priv, GEM_SPEC_ADD1_BOT, bot);
 		gem_write32(priv, GEM_SPEC_ADD1_TOP, top);
@@ -152,7 +152,7 @@ gem_txq_info_get(struct rte_eth_dev *dev, uint16_t qid,
 static int
 gem_rx_queue_setup(struct rte_eth_dev *dev, uint16_t qid, uint16_t nb_desc,
 		   unsigned int socket_id, const struct rte_eth_rxconf *conf,
-		   struct rte_mempool *mb_pool)
+	struct rte_mempool *mb_pool)
 {
 	struct gem_priv *priv = dev->data->dev_private;
 	struct gem_queue *q;
@@ -179,22 +179,23 @@ gem_rx_queue_setup(struct rte_eth_dev *dev, uint16_t qid, uint16_t nb_desc,
 	for (attempt = 0; attempt < 8; attempt++) {
 		snprintf(mz_name, sizeof(mz_name), "gem_rx_bd_%u_%u_try%u",
 			 priv->port_id, qid, attempt);
-		mz = rte_memzone_reserve_aligned(mz_name,
+	mz = rte_memzone_reserve_aligned(mz_name,
 						 sizeof(struct gem_rx_bd) *
 						 GEM_DESC_NUM,
-						 socket_id,
-						 RTE_MEMZONE_IOVA_CONTIG,
-						 RTE_CACHE_LINE_SIZE);
-		if (mz == NULL)
+					 socket_id,
+					 RTE_MEMZONE_IOVA_CONTIG,
+					 RTE_CACHE_LINE_SIZE);
+	if (mz == NULL)
 			continue;
 
-		q->rx_ring = mz->addr;
-		q->rx_ring_iova = mz->iova;
-		if (q->rx_ring_iova <= 0xFFFFFFFFULL &&
-		    (q->rx_ring_iova & 0x3ULL) == 0)
+	q->rx_ring = mz->addr;
+	q->rx_ring_iova = mz->iova;
+	PMD_LOG(INFO, "RX ring vaddr=%p iova=0x%llx",
+		q->rx_ring, (unsigned long long)q->rx_ring_iova);
+		if ((q->rx_ring_iova & 0x3ULL) == 0)
 			break;
 
-		PMD_LOG(WARNING, "RX ring iova not 32-bit/4B aligned (try=%u): 0x%llx",
+		PMD_LOG(WARNING, "RX ring iova not 4B aligned (try=%u): 0x%llx",
 			attempt, (unsigned long long)q->rx_ring_iova);
 		(void)rte_memzone_free(mz);
 		mz = NULL;
@@ -253,22 +254,23 @@ gem_tx_queue_setup(struct rte_eth_dev *dev, uint16_t qid, uint16_t nb_desc,
 	for (attempt = 0; attempt < 8; attempt++) {
 		snprintf(mz_name, sizeof(mz_name), "gem_tx_bd_%u_%u_try%u",
 			 priv->port_id, qid, attempt);
-		mz = rte_memzone_reserve_aligned(mz_name,
+	mz = rte_memzone_reserve_aligned(mz_name,
 						 sizeof(struct gem_tx_bd) *
 						 GEM_DESC_NUM,
-						 socket_id,
-						 RTE_MEMZONE_IOVA_CONTIG,
-						 RTE_CACHE_LINE_SIZE);
-		if (mz == NULL)
+					 socket_id,
+					 RTE_MEMZONE_IOVA_CONTIG,
+					 RTE_CACHE_LINE_SIZE);
+	if (mz == NULL)
 			continue;
 
-		q->tx_ring = mz->addr;
-		q->tx_ring_iova = mz->iova;
-		if (q->tx_ring_iova <= 0xFFFFFFFFULL &&
-		    (q->tx_ring_iova & 0x3ULL) == 0)
+	q->tx_ring = mz->addr;
+	q->tx_ring_iova = mz->iova;
+	PMD_LOG(INFO, "TX ring vaddr=%p iova=0x%llx",
+		q->tx_ring, (unsigned long long)q->tx_ring_iova);
+		if ((q->tx_ring_iova & 0x3ULL) == 0)
 			break;
 
-		PMD_LOG(WARNING, "TX ring iova not 32-bit/4B aligned (try=%u): 0x%llx",
+		PMD_LOG(WARNING, "TX ring iova not 4B aligned (try=%u): 0x%llx",
 			attempt, (unsigned long long)q->tx_ring_iova);
 		(void)rte_memzone_free(mz);
 		mz = NULL;
@@ -379,4 +381,4 @@ const struct eth_dev_ops *
 gem_get_eth_dev_ops(void)
 {
 	return &gem_ops;
-}
+    }

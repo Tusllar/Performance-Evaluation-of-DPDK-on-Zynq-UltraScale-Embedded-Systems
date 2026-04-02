@@ -18,9 +18,34 @@ gem_dma_clean(const void *addr, size_t len)
 
 	p &= ~(line - 1);
 	for (; p < end; p += line)
-		__asm__ volatile("dc cvac, %0" :: "r"(p) : "memory");
+		/*
+		 * Use "cvau" (to Point of Unification) for user-space cache maintenance.
+		 * Some systems trap on "cvac/ivac" in EL0.
+		 */
+		__asm__ volatile("dc cvau, %0" :: "r"(p) : "memory");
 
-	__asm__ volatile("dsb ish" ::: "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+#else
+	RTE_SET_USED(addr);
+	RTE_SET_USED(len);
+#endif
+}
+
+/* Invalidate CPU cache to observe descriptor updates done by the device. */
+static inline void
+gem_dma_invalidate(const void *addr, size_t len)
+{
+#if defined(__aarch64__)
+	uintptr_t p = (uintptr_t)addr;
+	uintptr_t end = p + len;
+	const uintptr_t line = 64;
+
+	p &= ~(line - 1);
+	for (; p < end; p += line)
+		/* Invalidate to PoU for user-space execution. */
+		__asm__ volatile("dc ivau, %0" :: "r"(p) : "memory");
+
+	__asm__ volatile("dsb sy" ::: "memory");
 #else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);
@@ -87,6 +112,11 @@ gem_tx_cleanup(struct gem_queue *q)
 		struct gem_tx_bd *bd = &q->tx_ring[q->tx_tail];
 		struct rte_mbuf *m;
 
+		/* Non-coherent DMA: ensure CPU observes device-updated descriptor. */
+		gem_dma_invalidate(bd, sizeof(*bd));
+		GEM_LOG("TX reclaim: idx=%u ctrl=0x%08x USED=%u",
+			q->tx_tail, bd->ctrl, !!(bd->ctrl & GEM_TX_USED));
+
 		if ((bd->ctrl & GEM_TX_USED) == 0)
 			break;
 
@@ -145,7 +175,9 @@ gem_tx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		uint32_t ctrl;
 		uint16_t desc_idx = q->tx_head;
 		uint64_t iova;
-
+		gem_dma_invalidate(bd, sizeof(*bd));
+		GEM_LOG("TX head check: idx=%u ctrl=0x%08x USED=%u",
+			q->tx_head, bd->ctrl, !!(bd->ctrl & GEM_TX_USED));
 		if ((bd->ctrl & GEM_TX_USED) == 0)
 			break;
 		if (q->tx_pending >= GEM_DESC_NUM)
@@ -183,6 +215,10 @@ gem_tx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 				continue;
 			}
 			bd->addr = (uint32_t)iova;
+			/* Extra debug for DMA visibility: mbuf VA/IOVA */
+			GEM_LOG("TX mbuf va=%p iova=0x%llx",
+				rte_pktmbuf_mtod(m, void *),
+				(unsigned long long)iova);
 		}
 
 		ctrl = (uint32_t)(m->pkt_len & GEM_TX_LEN_MASK) | GEM_TX_LAST;
@@ -191,7 +227,7 @@ gem_tx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 
 		/* Non-coherent DMA: clean packet payload before handoff. */
 		gem_dma_clean(rte_pktmbuf_mtod(m, const void *), m->pkt_len);
-
+		/* Ensure payload is visible before descriptor publish. */
 		rte_wmb();
 		bd->ctrl = ctrl;
 
@@ -209,6 +245,9 @@ gem_tx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 
 		GEM_LOG("TX[%u]: ctrl=0x%08x addr=0x%08x len=%u",
 			desc_idx, ctrl, bd->addr, m->pkt_len);
+
+		/* Ensure all descriptor writes reach the device before doorbell. */
+		rte_io_wmb();
 
 		q->tx_head = (q->tx_head + 1) % GEM_DESC_NUM;
 		q->tx_pending++;
