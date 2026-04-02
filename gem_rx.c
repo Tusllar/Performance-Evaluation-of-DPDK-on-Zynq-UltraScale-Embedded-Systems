@@ -22,13 +22,9 @@ gem_dma_clean(const void *addr, size_t len)
 
 	p &= ~(line - 1);
 	for (; p < end; p += line)
-		/*
-		 * Use "cvau" (to Point of Unification) for user-space cache maintenance.
-		 * Some systems trap on "cvac/ivac" in EL0.
-		 */
-		__asm__ volatile("dc cvau, %0" :: "r"(p) : "memory");
+		__asm__ volatile("dc cvac, %0" :: "r"(p) : "memory");
 
-	__asm__ volatile("dsb sy" ::: "memory");
+	__asm__ volatile("dsb ish" ::: "memory");
 #else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);
@@ -45,10 +41,9 @@ gem_dma_invalidate(const void *addr, size_t len)
 
 	p &= ~(line - 1);
 	for (; p < end; p += line)
-		/* Invalidate to PoU for user-space execution. */
-		__asm__ volatile("dc ivau, %0" :: "r"(p) : "memory");
+		__asm__ volatile("dc ivac, %0" :: "r"(p) : "memory");
 
-	__asm__ volatile("dsb sy" ::: "memory");
+	__asm__ volatile("dsb ish" ::: "memory");
 #else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);

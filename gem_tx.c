@@ -18,13 +18,9 @@ gem_dma_clean(const void *addr, size_t len)
 
 	p &= ~(line - 1);
 	for (; p < end; p += line)
-		/*
-		 * Use "cvau" (to Point of Unification) for user-space cache maintenance.
-		 * Some systems trap on "cvac/ivac" in EL0.
-		 */
-		__asm__ volatile("dc cvau, %0" :: "r"(p) : "memory");
+		__asm__ volatile("dc cvac, %0" :: "r"(p) : "memory");
 
-	__asm__ volatile("dsb sy" ::: "memory");
+	__asm__ volatile("dsb ish" ::: "memory");
 #else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);
@@ -42,10 +38,9 @@ gem_dma_invalidate(const void *addr, size_t len)
 
 	p &= ~(line - 1);
 	for (; p < end; p += line)
-		/* Invalidate to PoU for user-space execution. */
-		__asm__ volatile("dc ivau, %0" :: "r"(p) : "memory");
+		__asm__ volatile("dc ivac, %0" :: "r"(p) : "memory");
 
-	__asm__ volatile("dsb sy" ::: "memory");
+	__asm__ volatile("dsb ish" ::: "memory");
 #else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);
@@ -114,8 +109,6 @@ gem_tx_cleanup(struct gem_queue *q)
 
 		/* Non-coherent DMA: ensure CPU observes device-updated descriptor. */
 		gem_dma_invalidate(bd, sizeof(*bd));
-		GEM_LOG("TX reclaim: idx=%u ctrl=0x%08x USED=%u",
-			q->tx_tail, bd->ctrl, !!(bd->ctrl & GEM_TX_USED));
 
 		if ((bd->ctrl & GEM_TX_USED) == 0)
 			break;
@@ -176,8 +169,10 @@ gem_tx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		uint16_t desc_idx = q->tx_head;
 		uint64_t iova;
 		gem_dma_invalidate(bd, sizeof(*bd));
-		GEM_LOG("TX head check: idx=%u ctrl=0x%08x USED=%u",
-			q->tx_head, bd->ctrl, !!(bd->ctrl & GEM_TX_USED));
+		GEM_LOG("TX cleanup: idx=%u ctrl=0x%08x USED=%u",
+			q->tx_tail,
+			bd->ctrl,
+			!!(bd->ctrl & GEM_TX_USED));
 		if ((bd->ctrl & GEM_TX_USED) == 0)
 			break;
 		if (q->tx_pending >= GEM_DESC_NUM)
@@ -227,8 +222,8 @@ gem_tx_pkt_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_bufs)
 
 		/* Non-coherent DMA: clean packet payload before handoff. */
 		gem_dma_clean(rte_pktmbuf_mtod(m, const void *), m->pkt_len);
-		/* Ensure payload is visible before descriptor publish. */
-		rte_wmb();
+		rte_wmb();      // memory barrier
+		rte_io_wmb();   // đảm bảo ordering với device
 		bd->ctrl = ctrl;
 
 		/*
