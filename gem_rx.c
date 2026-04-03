@@ -11,43 +11,18 @@
 #include "gem_ethdev.h"
 #include "gem_rxtx.h"
 
-/* Cache maintenance for non-coherent DMA (common on embedded SoCs). */
 static inline void
 gem_dma_clean(const void *addr, size_t len)
 {
-#if defined(__aarch64__)
-	uintptr_t p = (uintptr_t)addr;
-	uintptr_t end = p + len;
-	const uintptr_t line = 64; /* typical; over-cleaning is OK */
-
-	p &= ~(line - 1);
-	for (; p < end; p += line)
-		__asm__ volatile("dc cvac, %0" :: "r"(p) : "memory");
-
-	__asm__ volatile("dsb ish" ::: "memory");
-#else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);
-#endif
 }
 
 static inline void
 gem_dma_invalidate(const void *addr, size_t len)
 {
-#if defined(__aarch64__)
-	uintptr_t p = (uintptr_t)addr;
-	uintptr_t end = p + len;
-	const uintptr_t line = 64; /* typical; over-invalidation is OK */
-
-	p &= ~(line - 1);
-	for (; p < end; p += line)
-		__asm__ volatile("dc ivac, %0" :: "r"(p) : "memory");
-
-	__asm__ volatile("dsb ish" ::: "memory");
-#else
 	RTE_SET_USED(addr);
 	RTE_SET_USED(len);
-#endif
 }
 
 uint16_t
